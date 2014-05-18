@@ -10,6 +10,7 @@ class ThreadComm():
     mode = None
     thread = None
     messages = Queue()
+    socket = None
     
     def __init__(self, port, sharedSecret):
         self._port = port
@@ -110,6 +111,8 @@ class ThreadComm():
             return None
     
     def sendMsg(self,msg):
+        if self.socket == None:
+            raise ThreadCommException("Not connected!")
         self.socket.sendall(msg)
         
     def kill(self):
