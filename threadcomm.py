@@ -9,13 +9,15 @@ class ThreadComm():
     
     mode = None
     thread = None
-    messages = Queue()
+    messages = None
     socket = None
     ready = False
+    connected = False
     
     def __init__(self, port, sharedSecret):
         self._port = port
         self._sharedSecret = sharedSecret
+        self.messages = Queue()
         
         #Connect and send SIN
         try:
@@ -51,6 +53,7 @@ class ThreadComm():
             self.mode = "CLIENT"
             self.socket = sock
             self.ready = True
+            self.connected = True
         else:
             raise ThreadCommException("Server returned an unknown response")
     
@@ -79,6 +82,8 @@ class ThreadComm():
                     #Invalid connection
                     conn.close()
         
+        self.connected = True
+        
         #Serve
         while not self._serverExit:
             ready = select([conn], [], [], 1)
@@ -97,6 +102,7 @@ class ThreadComm():
         s.close()
     
     def recvMsg(self):
+        data = ""
         if self.mode == "CLIENT":
             while True:
                 ready = select([self.socket], [], [], 1)
@@ -106,7 +112,10 @@ class ThreadComm():
                         break
                 else:
                     break
-                self.messages.put(data)
+                
+            data = data.splitlines()
+            for line in data:                 
+                self.messages.put(line)
         
         try:
             message = self.messages.get(False)
@@ -118,7 +127,7 @@ class ThreadComm():
     def sendMsg(self,msg):
         if self.socket == None:
             raise ThreadCommException("Not connected!")
-        self.socket.sendall(msg)
+        self.socket.sendall(msg+"\r\n")
         
     def kill(self):
         if self.mode == "SERVER":
@@ -131,7 +140,9 @@ class ThreadComm():
         while not self.ready:
             time.sleep(1)
             
-        
+    def waitConnected(self):
+        while not self.connected:
+            time.sleep(1)
             
 
 class ThreadCommException(Exception):
