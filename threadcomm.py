@@ -1,4 +1,4 @@
-import sys, threading, socket
+import sys, threading, socket, time
 from Queue import Queue
 from select import select
 
@@ -11,6 +11,7 @@ class ThreadComm():
     thread = None
     messages = Queue()
     socket = None
+    ready = False
     
     def __init__(self, port, sharedSecret):
         self._port = port
@@ -49,6 +50,7 @@ class ThreadComm():
             #Server exists and it's ok
             self.mode = "CLIENT"
             self.socket = sock
+            self.ready = True
         else:
             raise ThreadCommException("Server returned an unknown response")
     
@@ -57,6 +59,7 @@ class ThreadComm():
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.bind(("127.0.0.1", self._port))
         s.setblocking(0)
+        self.ready = True
         
         #Wait for connections
         validConnection = False
@@ -120,6 +123,11 @@ class ThreadComm():
             self._serverExit = True
         else:
             self.socket.close()
+    
+    def waitReady(self):
+        while not self.ready:
+            time.sleep(1)
+            
         
             
 
