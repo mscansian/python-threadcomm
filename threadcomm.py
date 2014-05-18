@@ -57,6 +57,7 @@ class ThreadComm():
     def serverRun(self):
         #Start server
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         s.bind(("127.0.0.1", self._port))
         s.setblocking(0)
         self.ready = True
@@ -92,6 +93,7 @@ class ThreadComm():
         
         #Close connection
         conn.close()
+        s.shutdown(socket.SHUT_RDWR)
         s.close()
     
     def recvMsg(self):
@@ -121,6 +123,7 @@ class ThreadComm():
     def kill(self):
         if self.mode == "SERVER":
             self._serverExit = True
+            self.thread.join()
         else:
             self.socket.close()
     
