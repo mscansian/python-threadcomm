@@ -62,7 +62,7 @@ class ThreadComm():
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         s.bind(("127.0.0.1", self._port))
-        s.setblocking(0)
+        s.settimeout(0.0)
         self.ready = True
         
         #Wait for connections
@@ -107,15 +107,16 @@ class ThreadComm():
             while True:
                 ready = select([self.socket], [], [], 1)
                 if ready[0]:
-                    data = self.socket.recv(1024)
+                    data = data + self.socket.recv(1024)
                     if data == "":
                         break
                 else:
                     break
-                
+            
             data = data.splitlines()
-            for line in data:                 
-                self.messages.put(line)
+            for line in data:
+                if line <> "":                 
+                    self.messages.put(line)
         
         try:
             message = self.messages.get(False)
@@ -127,6 +128,7 @@ class ThreadComm():
     def sendMsg(self,msg):
         if self.socket == None:
             raise ThreadCommException("Not connected!")
+        self.socket.setblocking(1)
         self.socket.sendall(msg+"\r\n")
         
     def kill(self):
