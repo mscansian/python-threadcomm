@@ -94,7 +94,7 @@ class ThreadComm():
                     data = ""
                 
                 if data <> "":
-                    self.messages.put(data)
+                    self.messages.put(data[:-2])
         
         #Close connection
         conn.close()
