@@ -3,149 +3,271 @@ from Queue import Queue
 from select import select
 
 class ThreadComm():
+    #Objects
+    netObject = None
+    
+    #Configuration
     _port = None
-    _sharedSecret = None
-    _serverExit = False
+    _connID = None
+    _role = None
     
-    mode = None
-    thread = None
-    messages = None
-    socket = None
-    ready = False
-    connected = False
-    
-    def __init__(self, port, sharedSecret):
+    def __init__(self, port, connID, role=None):
         self._port = port
-        self._sharedSecret = sharedSecret
-        self.messages = Queue()
-        
-        #Connect and send SIN
-        try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.connect(("127.0.0.1", self._port))
-            sock.send('SIN '+self._sharedSecret)
-            
-            #Wait for reply
-            response = None
-            sock.setblocking(0)
-            ready = select([sock], [], [], 1)
-            if ready[0]:
-                response = sock.recv(1024)
-        except socket.error :
-            exceptionType, exceptionValue, exceptionTraceback = sys.exc_info()
-            if exceptionValue[0] == 111 :
-                response = None
-            else:
-                raise ThreadCommException("Socket returned an unknown error")
-        
-        if response == None:
-            #Server does not exists, create one
-            try:                    
-                self.thread = threading.Thread(target=self.serverRun)
-                self.thread.daemon = True
-                self.thread.name = "ThreadComm"
-                self.thread.start()
-            except:
-                raise ThreadCommException("Unable to create ThreadComm thread")
-            self.mode = "SERVER"
-        elif response == "ACK "+self._sharedSecret:
-            #Server exists and it's ok
-            self.mode = "CLIENT"
-            self.socket = sock
-            self.ready = True
-            self.connected = True
-        else:
-            raise ThreadCommException("Server returned an unknown response")
+        self._connID = connID
+        self._role = role
     
-    def serverRun(self):
-        #Start server
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        s.bind(("127.0.0.1", self._port))
-        s.settimeout(0.0)
-        self.ready = True
+    def start(self):
+        try:
+            client = ThreadCommClient(self._port, self._connID)
+            response = client.start()
+        except ThreadCommException:
+            response = False
         
-        #Wait for connections
-        validConnection = False
-        while not validConnection:
-            s.listen(1)
-            ready = select([s], [], [], 1)
-            if ready[0]:
-                conn, addr = s.accept()
-                data = conn.recv(1024)
-                if data == "SIN "+self._sharedSecret:
-                    #Valid connection
-                    conn.sendall("ACK "+self._sharedSecret)
-                    self.socket = conn
-                    validConnection = True
-                else:
-                    #Invalid connection
-                    conn.close()
-        
-        self.connected = True
-        
-        #Serve
-        while not self._serverExit:
-            ready = select([conn], [], [], 1)
-            if ready[0]:
-                try:
-                    data = conn.recv(1024)
-                except:
-                    data = ""
+        if (response == False): #No server available
+            if (self._role==None) or (self._role==ThreadCommServer): 
+                #Close client and start a new server
+                client.stop()
                 
-                if data <> "":
-                    self.messages.put(data[:-2])
-        
-        #Close connection
-        conn.close()
-        s.shutdown(socket.SHUT_RDWR)
-        s.close()
+                server = ThreadCommServer(self._port, self._connID)
+                server.start()
+                server.waitReady()
+                self.netObject = server
+                return True
+            elif (self._role==ThreadCommClient): #Raise no server available error
+                raise ThreadCommException("Server not available in ThreadComm.start()")
+            else: #Raise unknown role error
+                raise ThreadCommException("Unknown role in ThreadComm.start()")
+        else: #Server is available
+            if (self._role==None) or (self._role==ThreadCommClient): #Keep client connection
+                self.netObject = client
+                return True
+            elif (self._role==ThreadCommServer): #Raise server already up error
+                raise ThreadCommException("Server already up in ThreadComm.start()")
+            else: #Raise unknown role error
+                raise ThreadCommException("Unknown role in ThreadComm.start()")
+                    
+    def stop(self):
+        return self.netObject.stop()
     
     def recvMsg(self):
+        return self.netObject.recvMsg()
+    
+    def sendMsg(self, message):      
+        return self.netObject.sendMsg(message)
+
+class ThreadCommClient():
+    #Objects
+    socket = None
+    
+    #Configurations
+    _port = None
+    _connID = None
+    _messages = None
+    
+    #Signals
+    _READY = False
+    
+    def __init__(self, port, connID):
+        self._port = port
+        self._connID = connID
+    
+    def start(self):
+        try:
+            #Create socket and try a connection
+            self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.socket.connect(("127.0.0.1", self._port))
+            self.socket.sendall('SIN '+self._connID)
+                
+            #Wait for a reply and handle it acordingly
+            self.socket.setblocking(0)
+            ready = select([self.socket], [], [], 1)
+            if ready[0]:
+                response = self.socket.recv(1024)
+        except socket.error:
+            exceptionType, exceptionValue, exceptionTraceback = sys.exc_info()
+            if exceptionValue[0] == 111:
+                raise ThreadCommException("Server did not respond on ThreadCommClient.start()")
+            else:
+                raise
+        
+        if not (response == "ACK "+self._connID):
+            raise ThreadCommException("Server returned an unknown response on ThreadCommClient.start()")
+        
+        self._READY = True
+        return True
+    
+    def stop(self):
+        self.socket.close()
+    
+    def waitReady(self, timeout=0):
+        while not self._READY:
+            time.sleep(0.1)
+    
+    def recvMsg(self):
+        self._listen()
+        return self._getMessage()
+    
+    def sendMsg(self, message):
+        if self.socket == None:
+            raise ThreadCommException("Socket not connected to the server in ThreadCommClient.sendMsg()")
+        self.socket.sendall(message.replace("\n","\\n")+"\r\n")
+    
+    def _listen(self):
         data = ""
-        if self.mode == "CLIENT":
-            while True:
-                ready = select([self.socket], [], [], 1)
-                if ready[0]:
-                    data = data + self.socket.recv(1024)
-                    if data == "":
-                        break
-                else:
+        while True:
+            ready = select([self.socket], [], [], 0.01)
+            if ready[0]:
+                data = data + self.socket.recv(1024)
+                if data == "":
                     break
+            else:
+                break
             
             data = data.splitlines()
             for line in data:
                 if line <> "":                 
-                    self.messages.put(line)
-        
+                    self._addMessage(line)
+                    
+    def _addMessage(self, message):
+        if self._messages == None:
+            self._messages = Queue()
+        self._messages.put(message.replace("\\n","\n"))
+
+    def _getMessage(self):
         try:
-            message = self.messages.get(False)
-            self.messages.task_done()
+            message = self._messages.get(False)
+            self._messages.task_done()
             return message
         except:
-            return None
+            raise ThreadCommException("No new messages in ThreadComm._getMessage()")
+
+class ThreadCommServer(): 
+    #Objects
+    server = None
+    client = None
     
-    def sendMsg(self,msg):
-        if self.socket == None:
-            raise ThreadCommException("Not connected!")
-        self.socket.setblocking(1)
-        self.socket.sendall(msg+"\r\n")
-        
-    def kill(self):
-        if self.mode == "SERVER":
-            self._serverExit = True
-            self.thread.join()
-        else:
-            self.socket.close()
+    #Configurations
+    _port = None
+    _connID = None
+    _messages = None
+    
+    #Signals
+    _SIGTERM = False
+    _READY = False
+    
+    def __init__(self, port, connID):
+        self._port = port
+        self._connID = connID
+    
+    def start(self):
+        try:                    
+            self.thread = threading.Thread(target=self._serve)
+            self.thread.daemon = True
+            self.thread.name = "ThreadComm Server"
+            self.thread.start()
+        except:
+            raise ThreadCommException("Unable to create ThreadComm thread in ThreadCommServer.start()")
+    
+    def stop(self):
+        self._SIGTERM = True
     
     def waitReady(self):
-        while not self.ready:
-            time.sleep(1)
+        while not self._READY:
+            time.sleep(0.1)
+    
+    def recvMsg(self):
+        return self._getMessage()
+    
+    def sendMsg(self, message):
+        if self.client == None:
+            raise ThreadCommException("Client not connected to the server in ThreadCommServer.sendMsg()")
+        self.client.sendall(message.replace("\n","\\n")+"\r\n")
+
+    def _serve(self):       
+        #Create a new server
+        self.server = self._createServer(self._port)
+        self._READY = True
+        
+        while not self._SIGTERM:
+            if self.client == None: #If there is not client, we should wait for a new one
+                self.client = self._waitConnection(self.server, self._connID)
             
-    def waitConnected(self):
-        while not self.connected:
-            time.sleep(1)
+            #Get new client messages
+            try:
+                data = self._listen(self.client)
+            except ThreadCommException:
+                pass
+            time.sleep(0.1)
+        self._close(self.server, self.client)
+        
+    def _addMessage(self, message):
+        if self._messages == None:
+            self._messages = Queue()
+        self._messages.put(message.replace("\\n","\n"))
+
+    def _getMessage(self):
+        try:
+            message = self._messages.get(False)
+            self._messages.task_done()
+            return message
+        except:
+            raise ThreadCommException("No new messages in ThreadComm._getMessage()")
+
+    #Start server socket at a given port and return its object
+    def _createServer(self, port, timeout=0.0):
+        try:
+            server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            server.bind(("127.0.0.1", port))
+            server.settimeout(timeout)
+        except:
+            raise ThreadCommException("Unable to start server socket at ThreadCommServer._createServer()")
+        
+        return server
+        
+    #Wait for a client connection and return its object
+    def _waitConnection(self, server, connID, timeout=0):
+        now = time.time()
+        while (timeout==0) or ((now+timeout) <= time.time()):
+            server.listen(1)
+            ready = select([server], [], [], 0.01)
+            if ready[0]:
+                client, addr = server.accept()
+                data = client.recv(1024)
+                if data == "SIN "+connID: #Valid connection
+                    client.sendall("ACK "+connID)
+                    return client
+                else: #Invalid connection
+                    conn.close()
+            time.sleep(0.1)
+        raise TimeoutError("Timeout exceeded at ThreadCommServer._waitConnection()")
+    
+    def _listen(self, client):
+        data = ""
+        while True:
+            ready = select([client], [], [], 0.01)
+            if not ready[0]:
+                break
             
+            try:
+                line = client.recv(1024)
+            except:
+                pass
+            else:
+                data = data + line
+        
+        if not (data == ""):
+            data = data.splitlines()
+            for msg in data:
+                if msg <> "":                 
+                    self._addMessage(msg)
+        else:
+            raise ThreadCommException("No available data in ThreadCommServer._listen()")
+    
+    def _close(self, server, client):
+        client.close()
+        server.shutdown(socket.SHUT_RDWR)
+        server.close()
 
 class ThreadCommException(Exception):
     def __init__(self, value):
