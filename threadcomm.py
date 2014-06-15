@@ -55,6 +55,9 @@ class ThreadComm():
     def sendMsg(self, message):      
         return self.netObject.sendMsg(message)
 
+    def isReconnect(self):
+        return self.netObject.isReconnect()
+
 class ThreadCommClient():
     #Objects
     socket = None
@@ -63,6 +66,7 @@ class ThreadCommClient():
     _port = None
     _connID = None
     _messages = None
+    _reconnect = None
     
     #Signals
     _READY = False
@@ -73,6 +77,8 @@ class ThreadCommClient():
     
     def start(self):
         try:
+            response = None
+            
             #Create socket and try a connection
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.socket.connect(("127.0.0.1", self._port))
@@ -85,19 +91,22 @@ class ThreadCommClient():
                 response = self.socket.recv(1024)
         except socket.error:
             exceptionType, exceptionValue, exceptionTraceback = sys.exc_info()
-            if exceptionValue[0] == 111:
+            if (exceptionValue[0] == 111) or (exceptionValue[0] == 104):
                 raise ThreadCommException("Server did not respond on ThreadCommClient.start()")
             else:
                 raise
         
-        if not (response == "ACK "+self._connID):
+        if  not (response == "ACK "+self._connID):
             raise ThreadCommException("Server returned an unknown response on ThreadCommClient.start()")
         
         self._READY = True
         return True
     
     def stop(self):
-        self.socket.close()
+        try:
+            self.socket.shutdown(socket.SHUT_RD)
+        except:
+            pass
     
     def waitReady(self, timeout=0):
         while not self._READY:
@@ -162,7 +171,7 @@ class ThreadCommServer():
     def start(self):
         try:                    
             self.thread = threading.Thread(target=self._serve)
-            self.thread.daemon = True
+            self.thread.daemon = False
             self.thread.name = "ThreadComm Server"
             self.thread.start()
         except:
@@ -189,8 +198,13 @@ class ThreadCommServer():
         self._READY = True
         
         while not self._SIGTERM:
-            if self.client == None: #If there is not client, we should wait for a new one
-                self.client = self._waitConnection(self.server, self._connID)
+            client = None
+            while client == None: #If there is not client, we should wait for a new one
+                client = self._waitConnection(self.server, self._connID)
+                if client <> None:
+                    self.client = client
+                else:
+                    client = self.client
             
             #Get new client messages
             try:
@@ -226,21 +240,18 @@ class ThreadCommServer():
         return server
         
     #Wait for a client connection and return its object
-    def _waitConnection(self, server, connID, timeout=0):
-        now = time.time()
-        while (timeout==0) or ((now+timeout) <= time.time()):
-            server.listen(1)
-            ready = select([server], [], [], 0.01)
-            if ready[0]:
-                client, addr = server.accept()
-                data = client.recv(1024)
-                if data == "SIN "+connID: #Valid connection
-                    client.sendall("ACK "+connID)
-                    return client
-                else: #Invalid connection
-                    conn.close()
-            time.sleep(0.1)
-        raise TimeoutError("Timeout exceeded at ThreadCommServer._waitConnection()")
+    def _waitConnection(self, server, connID):
+        server.listen(1)
+        ready = select([server], [], [], 0.01)
+        if ready[0]:
+            client, addr = server.accept()
+            data = client.recv(1024)
+            if data == "SIN "+connID: #Valid connection
+                client.sendall("ACK "+connID)
+                return client
+            else: #Invalid connection
+                conn.close()
+        return None
     
     def _listen(self, client):
         data = ""
