@@ -103,10 +103,7 @@ class ThreadCommClient():
         return True
     
     def stop(self):
-        try:
-            self.socket.shutdown(socket.SHUT_RD)
-        except:
-            pass
+        self.socket.close()
     
     def waitReady(self, timeout=0):
         while not self._READY:
@@ -165,8 +162,8 @@ class ThreadCommServer():
     _READY = False
     
     def __init__(self, port, connID):
-        self._port = port
-        self._connID = connID
+        self._port = int(port)
+        self._connID = str(connID)
     
     def start(self):
         try:                    
@@ -196,7 +193,6 @@ class ThreadCommServer():
         #Create a new server
         self.server = self._createServer(self._port)
         self._READY = True
-        
         while not self._SIGTERM:
             client = None
             while client == None: #If there is not client, we should wait for a new one
@@ -250,7 +246,7 @@ class ThreadCommServer():
                 client.sendall("ACK "+connID)
                 return client
             else: #Invalid connection
-                conn.close()
+                client.close()
         return None
     
     def _listen(self, client):
@@ -262,9 +258,9 @@ class ThreadCommServer():
             
             try:
                 line = client.recv(1024)
-            except:
-                pass
+            except: pass
             else:
+                if not line: break
                 data = data + line
         
         if not (data == ""):
