@@ -129,10 +129,10 @@ class ThreadCommClient():
             else:
                 break
             
-            data = data.splitlines()
-            for line in data:
-                if line <> "":                 
-                    self._addMessage(line)
+        data = data.splitlines()
+        for line in data:
+            if line <> "":                 
+                self._addMessage(line)
                     
     def _addMessage(self, message):
         if self._messages == None:
